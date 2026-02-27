@@ -188,5 +188,4 @@ function getBtcPrice() external view returns (int256 price, uint8 priceDecimals)
 
 ---
 
-如果你后续扩展（比如增加多 oracle、支持更多交易对、完善声誉与罚没机制），可以在 README 末尾补充一个 `Roadmap` 小节列出未来计划。
 
