@@ -1,0 +1,21 @@
+{
+  "name": "kaspa-chainlink-btc-oracle",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test": "hardhat test",
+    "compile": "hardhat compile",
+    "deploy:kasplexTest": "hardhat run scripts/deploy.js --network kasplexTest",
+    "oracle:btc": "node oracle/oracle-btc.js"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "hardhat": "^2.22.0"
+  },
+  "dependencies": {
+    "axios": "^1.7.0",
+    "dotenv": "^16.4.0",
+    "ethers": "^6.11.0"
+  }
+}
+
