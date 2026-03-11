@@ -19,16 +19,31 @@ async function main() {
 
   // 3. Deploy BtcUsdAggregator
   const paymentPerOracle = ethers.parseEther("10"); // 10 KLINK per round per oracle
+  const minSubmissionCount = 1;
+  const roundTimeoutSeconds = 300;
+  const slashAmount = ethers.parseEther("50");
+  const requiredStakeAmount = ethers.parseEther("100");
   const BtcUsdAggregator = await ethers.getContractFactory("BtcUsdAggregator");
   const aggregator = await BtcUsdAggregator.deploy(
     await link.getAddress(),
     await registry.getAddress(),
-    paymentPerOracle
+    paymentPerOracle,
+    minSubmissionCount,
+    roundTimeoutSeconds,
+    slashAmount,
+    requiredStakeAmount
   );
   await aggregator.waitForDeployment();
   console.log("BtcUsdAggregator deployed at:", await aggregator.getAddress());
 
-  // 4. Add deployer as first oracle
+  // 4. Authorize aggregator to update registry stats
+  await (await registry.setAuthorizedUpdater(await aggregator.getAddress(), true)).wait();
+  console.log("Authorized aggregator as registry updater");
+
+  // 5. Deposit oracle stake and add deployer as first oracle
+  await (await link.approve(await aggregator.getAddress(), requiredStakeAmount)).wait();
+  await (await aggregator.depositStake(requiredStakeAmount)).wait();
+
   const registryWithSigner = registry.connect(deployer);
   await (await registryWithSigner.addOracle(deployer.address)).wait();
   console.log("Added oracle in registry:", deployer.address);
@@ -37,12 +52,12 @@ async function main() {
   await (await aggregatorWithSigner.addOracle(deployer.address)).wait();
   console.log("Added oracle in aggregator:", deployer.address);
 
-  // 5. Fund aggregator with KLINK to pay oracle
+  // 6. Fund aggregator with KLINK to pay oracle
   const fundAmount = ethers.parseEther("100000"); // 100,000 KLINK
   await (await link.transfer(await aggregator.getAddress(), fundAmount)).wait();
   console.log("Funded aggregator with KLINK:", fundAmount.toString());
 
-  // 6. Deploy BtcPriceConsumer
+  // 7. Deploy BtcPriceConsumer
   const BtcPriceConsumer = await ethers.getContractFactory("BtcPriceConsumer");
   const consumer = await BtcPriceConsumer.deploy(await aggregator.getAddress());
   await consumer.waitForDeployment();
@@ -55,4 +70,3 @@ main().catch((error) => {
   console.error(error);
   process.exitCode = 1;
 });
-

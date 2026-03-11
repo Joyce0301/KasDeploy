@@ -9,6 +9,13 @@
   - `BtcPriceConsumer`：示例用户合约，用于读取 BTC 价格
 - 使用 Node.js 编写的 **off-chain oracle**，从公共 API 获取 BTC 价格并提交到链上
 
+当前版本在最初 MVP 基础上，已经补上了一套 **最小可用的 slashing + quorum/timeout** 机制：
+
+- oracle 需要先质押 `KLINK` 才能被加入 active set
+- 每轮都有固定超时，避免单个 oracle 不提交导致系统卡死
+- 超时后只要达到 quorum，就能 finalize 本轮并对未提交者执行 slash
+- 超时后如果连 quorum 都没达到，则本轮记为 failed，并对未提交者执行 slash
+
 ---
 
 ## 目录结构
@@ -85,9 +92,10 @@ npm run deploy:kasplexTest
 1. 部署 `LinkToken`（`KLINK`）
 2. 部署 `OracleRegistry`
 3. 部署 `BtcUsdAggregator`
-4. 在 `OracleRegistry` 与 `BtcUsdAggregator` 中把部署者地址注册为首个 oracle
-5. 把一部分 `KLINK` 转入 `BtcUsdAggregator`，用于支付 oracle 报酬
-6. 部署 `BtcPriceConsumer`，并指向 `BtcUsdAggregator`
+4. 授权 `BtcUsdAggregator` 更新 `OracleRegistry` 中的声誉统计
+5. 为首个 oracle 质押最小 stake，并在 `OracleRegistry` 与 `BtcUsdAggregator` 中注册
+6. 把一部分 `KLINK` 转入 `BtcUsdAggregator`，用于支付 oracle 报酬
+7. 部署 `BtcPriceConsumer`，并指向 `BtcUsdAggregator`
 
 终端输出中会包含各个合约地址，例如：
 
@@ -154,9 +162,36 @@ function getBtcPrice() external view returns (int256 price, uint8 priceDecimals)
 - **价格聚合**：
   - 支持多个 oracle 报价，当前实现为 **中位数聚合**
   - 每个 oracle 报价成功后，会从 `BtcUsdAggregator` 中领取固定 `KLINK` 作为报酬
-- **MVP 取舍**：
-  - 暂未实现完整 SLA / 罚没逻辑 / 完整声誉系统
-  - 专注演示「Kaspa 上 Chainlink 风格 BTC 预言机」的最小闭环
+- **最小可用 slashing + quorum/timeout**：
+  - oracle 先通过 `depositStake()` 质押 `KLINK`，stake 达到门槛后才能被 owner 加入 active set
+  - `startNewRound()` 会开启新 round，并记录本轮的 `timeoutAt`
+  - 若所有 active oracle 都在超时前提交，则立即 finalize，不执行 slash
+  - 若超时后仍未收齐，只要提交数达到 `quorum`，任何人都可以调用 `finalizeTimedOutRound()` 用已提交数据完成聚合
+  - timeout finalize 时，未提交的 active oracle 会被扣除固定 `slashAmount`
+  - 若超时后连 quorum 都没达到，则 round 会被标记为 failed，同时仍会 slash 未提交者
+- **当前仍然是 MVP**：
+  - 还没有做“离群值/恶意错误值”的 slashing，只惩罚“不提交”
+  - 还没有完整的自动 round 调度和 timeout keeper
+  - 声誉系统目前仍是基础计数器，不包含更复杂的评分模型
+
+### 关键参数
+
+- `paymentPerOracle`：每轮每个成功提交 oracle 的固定奖励
+- `requiredStakeAmount`：成为 active oracle 所需的最低质押
+- `slashAmount`：超时未提交时扣除的固定 stake
+- `minSubmissionCount`：timeout 后允许 finalize 的最小提交数
+- `roundTimeoutSeconds`：每轮的超时秒数
+
+### Round 生命周期
+
+1. oracle 先持有并质押 `KLINK`
+2. owner 将其加入 `OracleRegistry` 和 aggregator 的 active oracle 列表
+3. owner 或 active oracle 调用 `startNewRound()`
+4. active oracle 在 timeout 前调用 `submit(answer, roundId)`
+5. 若全员提交，round 立即 finalize
+6. 若 timeout 到达：
+   - 达到 quorum：允许 finalize，并 slash 未提交者
+   - 未达到 quorum：round fail，并 slash 未提交者
 
 ---
 
@@ -169,6 +204,7 @@ function getBtcPrice() external view returns (int256 price, uint8 priceDecimals)
   ```
 
 - **运行测试（如果你添加了测试文件）**
+  - 当前仓库已包含针对 quorum/timeout/slashing 的基础测试
 
   ```bash
   npm test
@@ -187,5 +223,4 @@ function getBtcPrice() external view returns (int256 price, uint8 priceDecimals)
   ```
 
 ---
-
 

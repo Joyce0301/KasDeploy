@@ -11,6 +11,7 @@ contract OracleRegistry {
     }
 
     address public owner;
+    mapping(address => bool) public authorizedUpdaters;
     mapping(address => OracleInfo) public oracles;
     address[] public oracleList;
 
@@ -25,6 +26,10 @@ contract OracleRegistry {
 
     constructor() {
         owner = msg.sender;
+    }
+
+    function setAuthorizedUpdater(address updater, bool allowed) external onlyOwner {
+        authorizedUpdaters[updater] = allowed;
     }
 
     function addOracle(address oracle) external onlyOwner {
@@ -51,6 +56,7 @@ contract OracleRegistry {
         uint64 submittedDelta,
         uint64 acceptedDelta
     ) external {
+        require(authorizedUpdaters[msg.sender], "not updater");
         OracleInfo storage info = oracles[oracle];
         require(info.active, "not oracle");
         info.totalAssigned += assignedDelta;
@@ -59,4 +65,3 @@ contract OracleRegistry {
         emit OracleStatsUpdated(oracle, info.totalAssigned, info.totalSubmitted, info.totalAccepted);
     }
 }
-
