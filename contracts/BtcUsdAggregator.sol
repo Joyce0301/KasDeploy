@@ -10,10 +10,13 @@ contract BtcUsdAggregator {
         uint80 roundId;
         int256[] answers;
         uint8 requiredSubmissions;
+        uint8 selectedOracleCount;
         uint32 startedAt;
         uint32 timeoutAt;
         uint32 updatedAt;
         uint80 answeredInRound;
+        uint256 paymentPerSubmission;
+        uint256 slashAmount;
         bool finalized;
         bool failed;
     }
@@ -25,22 +28,27 @@ contract BtcUsdAggregator {
     // price has 8 decimals, e.g. 30000 * 1e8
     uint8 public constant DECIMALS = 8;
 
-    // how much LINK is paid per oracle per round
-    uint256 public paymentPerOracle;
-    uint256 public slashAmount;
+    // default round parameters for direct/manual rounds
+    uint256 public defaultPaymentPerOracle;
+    uint256 public defaultSlashAmount;
     uint256 public requiredStakeAmount;
-    uint8 public minSubmissionCount;
-    uint32 public roundTimeoutSeconds;
+    uint8 public defaultMinSubmissionCount;
+    uint32 public defaultRoundTimeoutSeconds;
 
-    // active oracles for this aggregator (subset of registry oracles)
+    // oracle eligibility and collateral
     address[] public activeOracles;
     mapping(address => bool) public isActiveOracle;
     mapping(address => uint256) public oracleStake;
+    mapping(address => bool) public authorizedRequesters;
 
     // submissions: roundId => oracle => submitted?
     mapping(uint80 => mapping(address => bool)) public hasSubmitted;
     mapping(uint80 => mapping(address => int256)) public submissions;
     mapping(uint80 => uint256) public submissionCount;
+
+    // request-scoped oracle set
+    mapping(uint80 => address[]) private roundOracles;
+    mapping(uint80 => mapping(address => bool)) public isRoundOracle;
 
     // latest aggregate
     uint80 public latestRoundId;
@@ -49,6 +57,7 @@ contract BtcUsdAggregator {
 
     event OracleAdded(address indexed oracle);
     event OracleRemoved(address indexed oracle);
+    event AuthorizedRequesterSet(address indexed requester, bool allowed);
     event NewRound(uint80 indexed roundId, uint32 startedAt);
     event OracleSubmission(uint80 indexed roundId, address indexed oracle, int256 answer);
     event AnswerUpdated(int256 current, uint80 indexed roundId, uint32 updatedAt);
@@ -62,7 +71,7 @@ contract BtcUsdAggregator {
         _;
     }
 
-    modifier onlyOracle() {
+    modifier onlyActiveOracle() {
         require(isActiveOracle[msg.sender], "not oracle");
         _;
     }
@@ -72,45 +81,55 @@ contract BtcUsdAggregator {
         _;
     }
 
+    modifier onlyAuthorizedRequester() {
+        require(authorizedRequesters[msg.sender], "not requester");
+        _;
+    }
+
     constructor(
         address _link,
         address _registry,
-        uint256 _paymentPerOracle,
-        uint8 _minSubmissionCount,
-        uint32 _roundTimeoutSeconds,
-        uint256 _slashAmount,
+        uint256 _defaultPaymentPerOracle,
+        uint8 _defaultMinSubmissionCount,
+        uint32 _defaultRoundTimeoutSeconds,
+        uint256 _defaultSlashAmount,
         uint256 _requiredStakeAmount
     ) {
-        require(_minSubmissionCount > 0, "quorum=0");
-        require(_roundTimeoutSeconds > 0, "timeout=0");
+        require(_defaultMinSubmissionCount > 0, "quorum=0");
+        require(_defaultRoundTimeoutSeconds > 0, "timeout=0");
         link = LinkToken(_link);
         registry = OracleRegistry(_registry);
         owner = msg.sender;
-        paymentPerOracle = _paymentPerOracle;
-        minSubmissionCount = _minSubmissionCount;
-        roundTimeoutSeconds = _roundTimeoutSeconds;
-        slashAmount = _slashAmount;
+        defaultPaymentPerOracle = _defaultPaymentPerOracle;
+        defaultMinSubmissionCount = _defaultMinSubmissionCount;
+        defaultRoundTimeoutSeconds = _defaultRoundTimeoutSeconds;
+        defaultSlashAmount = _defaultSlashAmount;
         requiredStakeAmount = _requiredStakeAmount;
     }
 
     // --- configuration ---
 
-    function setPaymentPerOracle(uint256 amount) external onlyOwner {
-        paymentPerOracle = amount;
+    function setAuthorizedRequester(address requester, bool allowed) external onlyOwner {
+        authorizedRequesters[requester] = allowed;
+        emit AuthorizedRequesterSet(requester, allowed);
     }
 
-    function setMinSubmissionCount(uint8 count) external onlyOwner {
+    function setDefaultPaymentPerOracle(uint256 amount) external onlyOwner {
+        defaultPaymentPerOracle = amount;
+    }
+
+    function setDefaultMinSubmissionCount(uint8 count) external onlyOwner {
         require(count > 0, "quorum=0");
-        minSubmissionCount = count;
+        defaultMinSubmissionCount = count;
     }
 
-    function setRoundTimeoutSeconds(uint32 timeoutSeconds) external onlyOwner {
+    function setDefaultRoundTimeoutSeconds(uint32 timeoutSeconds) external onlyOwner {
         require(timeoutSeconds > 0, "timeout=0");
-        roundTimeoutSeconds = timeoutSeconds;
+        defaultRoundTimeoutSeconds = timeoutSeconds;
     }
 
-    function setSlashAmount(uint256 amount) external onlyOwner {
-        slashAmount = amount;
+    function setDefaultSlashAmount(uint256 amount) external onlyOwner {
+        defaultSlashAmount = amount;
     }
 
     function setRequiredStakeAmount(uint256 amount) external onlyOwner {
@@ -167,36 +186,47 @@ contract BtcUsdAggregator {
         return activeOracles;
     }
 
-    // --- round / submission logic ---
-
-    /// @notice starts a new round for the current active oracle set
-    function startNewRound() external onlyOwnerOrOracle returns (uint80) {
-        require(_noOpenRound(), "round in progress");
-        require(activeOracles.length >= minSubmissionCount, "not enough oracles");
-        latestRoundId += 1;
-        uint80 roundId = latestRoundId;
-        Round storage r = rounds[roundId];
-        r.roundId = roundId;
-        r.requiredSubmissions = minSubmissionCount;
-        r.startedAt = uint32(block.timestamp);
-        r.timeoutAt = uint32(block.timestamp + roundTimeoutSeconds);
-        r.answeredInRound = roundId;
-
-        uint256 len = activeOracles.length;
-        for (uint256 i = 0; i < len; i++) {
-            registry.updateStats(activeOracles[i], 1, 0, 0);
-        }
-
-        emit NewRound(roundId, r.startedAt);
-        return roundId;
+    function getRoundOracles(uint80 roundId) external view returns (address[] memory) {
+        return roundOracles[roundId];
     }
 
-    /// @notice oracle reports BTC/USD price (8 decimals) for current round
-    function submit(int256 answer, uint80 roundId) external onlyOracle {
+    // --- round / submission logic ---
+
+    /// @notice starts a new round using the full active oracle set and default parameters
+    function startNewRound() external onlyOwnerOrOracle returns (uint80) {
+        uint256 len = activeOracles.length;
+        address[] memory selected = new address[](len);
+        for (uint256 i = 0; i < len; i++) {
+            selected[i] = activeOracles[i];
+        }
+
+        return
+            _startRound(
+                selected,
+                defaultMinSubmissionCount,
+                defaultRoundTimeoutSeconds,
+                defaultPaymentPerOracle,
+                defaultSlashAmount
+            );
+    }
+
+    /// @notice starts a round with request-scoped SLA parameters chosen by an order-matching contract
+    function startRoundWithSLA(
+        address[] calldata selectedOracles,
+        uint8 quorum,
+        uint32 timeoutSeconds,
+        uint256 paymentPerSubmission,
+        uint256 slashAmount
+    ) external onlyAuthorizedRequester returns (uint80) {
+        return _startRound(selectedOracles, quorum, timeoutSeconds, paymentPerSubmission, slashAmount);
+    }
+
+    function submit(int256 answer, uint80 roundId) external onlyActiveOracle {
         require(roundId == latestRoundId && roundId != 0, "invalid round");
         Round storage r = rounds[roundId];
         require(!r.finalized, "round finalized");
         require(block.timestamp <= r.timeoutAt, "round timed out");
+        require(isRoundOracle[roundId][msg.sender], "not selected");
         require(!hasSubmitted[roundId][msg.sender], "already submitted");
         require(answer > 0, "invalid answer");
 
@@ -205,10 +235,9 @@ contract BtcUsdAggregator {
         submissionCount[roundId] += 1;
         emit OracleSubmission(roundId, msg.sender, answer);
 
-        registry.updateStats(msg.sender, 0, 1, 0); // submittedDelta=1
+        registry.updateStats(msg.sender, 0, 1, 0);
 
-        // if everyone submitted before timeout, finalize immediately without slashing
-        if (submissionCount[roundId] == activeOracles.length && activeOracles.length > 0) {
+        if (submissionCount[roundId] == r.selectedOracleCount && r.selectedOracleCount > 0) {
             _finalizeRound(roundId, false);
         }
     }
@@ -226,24 +255,61 @@ contract BtcUsdAggregator {
         }
     }
 
+    function _startRound(
+        address[] memory selectedOracles,
+        uint8 quorum,
+        uint32 timeoutSeconds,
+        uint256 paymentPerSubmission,
+        uint256 slashAmount
+    ) internal returns (uint80) {
+        require(_noOpenRound(), "round in progress");
+        require(quorum > 0, "quorum=0");
+        require(timeoutSeconds > 0, "timeout=0");
+        require(selectedOracles.length >= quorum, "not enough oracles");
+
+        latestRoundId += 1;
+        uint80 roundId = latestRoundId;
+        Round storage r = rounds[roundId];
+        r.roundId = roundId;
+        r.requiredSubmissions = quorum;
+        r.selectedOracleCount = uint8(selectedOracles.length);
+        r.startedAt = uint32(block.timestamp);
+        r.timeoutAt = uint32(block.timestamp + timeoutSeconds);
+        r.answeredInRound = roundId;
+        r.paymentPerSubmission = paymentPerSubmission;
+        r.slashAmount = slashAmount;
+
+        for (uint256 i = 0; i < selectedOracles.length; i++) {
+            address oracle = selectedOracles[i];
+            require(isActiveOracle[oracle], "oracle not active");
+            require(!isRoundOracle[roundId][oracle], "duplicate oracle");
+            require(oracleStake[oracle] >= slashAmount, "stake below penalty");
+            isRoundOracle[roundId][oracle] = true;
+            roundOracles[roundId].push(oracle);
+            registry.updateStats(oracle, 1, 0, 0);
+        }
+
+        emit NewRound(roundId, r.startedAt);
+        return roundId;
+    }
+
     function _finalizeRound(uint80 roundId, bool applySlashing) internal {
         Round storage r = rounds[roundId];
         uint256 n = submissionCount[roundId];
         int256[] memory values = new int256[](n);
         uint256 j = 0;
-        uint256 len = activeOracles.length;
-        for (uint256 i = 0; i < len; i++) {
-            address oracle = activeOracles[i];
+        address[] storage selected = roundOracles[roundId];
+
+        for (uint256 i = 0; i < selected.length; i++) {
+            address oracle = selected[i];
             if (hasSubmitted[roundId][oracle]) {
                 values[j] = submissions[roundId][oracle];
                 j += 1;
             }
         }
 
-        // sort values
         _sort(values);
 
-        // median
         int256 median = values[n / 2];
 
         r.answers = values;
@@ -253,19 +319,15 @@ contract BtcUsdAggregator {
 
         emit AnswerUpdated(median, roundId, r.updatedAt);
 
-        // reward submitted oracles and update accepted stats
-        for (uint256 i = 0; i < len; i++) {
-            address oracle = activeOracles[i];
+        for (uint256 i = 0; i < selected.length; i++) {
+            address oracle = selected[i];
             if (hasSubmitted[roundId][oracle]) {
-                if (paymentPerOracle > 0) {
-                    require(
-                        link.transfer(oracle, paymentPerOracle),
-                        "LINK transfer failed"
-                    );
+                if (r.paymentPerSubmission > 0) {
+                    require(link.transfer(oracle, r.paymentPerSubmission), "LINK transfer failed");
                 }
-                registry.updateStats(oracle, 0, 0, 1); // acceptedDelta=1
+                registry.updateStats(oracle, 0, 0, 1);
             } else if (applySlashing) {
-                _slashOracle(roundId, oracle);
+                _slashOracle(roundId, oracle, r.slashAmount);
             }
         }
     }
@@ -276,18 +338,18 @@ contract BtcUsdAggregator {
         r.failed = true;
         r.updatedAt = uint32(block.timestamp);
 
-        uint256 len = activeOracles.length;
-        for (uint256 i = 0; i < len; i++) {
-            address oracle = activeOracles[i];
+        address[] storage selected = roundOracles[roundId];
+        for (uint256 i = 0; i < selected.length; i++) {
+            address oracle = selected[i];
             if (!hasSubmitted[roundId][oracle]) {
-                _slashOracle(roundId, oracle);
+                _slashOracle(roundId, oracle, r.slashAmount);
             }
         }
 
         emit RoundFailed(roundId, r.updatedAt);
     }
 
-    function _slashOracle(uint80 roundId, address oracle) internal {
+    function _slashOracle(uint80 roundId, address oracle, uint256 slashAmount) internal {
         uint256 currentStake = oracleStake[oracle];
         uint256 slash = currentStake < slashAmount ? currentStake : slashAmount;
         if (slash == 0) {
@@ -323,6 +385,19 @@ contract BtcUsdAggregator {
         return (roundId, r.finalized, r.failed, r.timeoutAt, submissionCount[roundId]);
     }
 
+    function canSubmit(address oracle, uint80 roundId) external view returns (bool) {
+        if (roundId == 0 || roundId != latestRoundId) {
+            return false;
+        }
+
+        Round storage r = rounds[roundId];
+        if (r.finalized || block.timestamp > r.timeoutAt) {
+            return false;
+        }
+
+        return isRoundOracle[roundId][oracle] && !hasSubmitted[roundId][oracle];
+    }
+
     function latestAnswer() external view returns (int256) {
         require(latestAnsweredRoundId != 0, "no answer");
         Round storage r = rounds[latestAnsweredRoundId];
@@ -353,7 +428,10 @@ contract BtcUsdAggregator {
         answeredInRound = r.answeredInRound;
     }
 
-    // insertion sort for small n
+    function decimals() external pure returns (uint8) {
+        return DECIMALS;
+    }
+
     function _sort(int256[] memory arr) internal pure {
         uint256 n = arr.length;
         for (uint256 i = 1; i < n; i++) {
@@ -366,11 +444,4 @@ contract BtcUsdAggregator {
             arr[j] = key;
         }
     }
-
-    // --- consumer (USER-SC) view API ---
-
-    function decimals() external pure returns (uint8) {
-        return DECIMALS;
-    }
-
 }

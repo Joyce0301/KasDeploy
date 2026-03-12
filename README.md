@@ -70,6 +70,10 @@ cp .env.example .env
 - **`DEPLOYER_PK`**：部署者私钥（带 `0x` 前缀）
 - **`ORACLE_PK`**：预言机节点的私钥（可以与 `DEPLOYER_PK` 相同，也可以分离）
 - **`AGGREGATOR_ADDRESS`**：`BtcUsdAggregator` 合约地址（部署后再填）
+- **`ORDER_MATCHING_ADDRESS`**：`OrderMatching` 合约地址（用于创建/跟踪请求，当前 oracle 脚本本身不直接调用它）
+- **`ORACLE_POLL_INTERVAL_MS`**：worker 轮询最新 round 的间隔，默认 `15000`
+- **`ORACLE_AUTO_FINALIZE`**：是否在 round 超时后自动调用 `finalizeTimedOutRound()`，默认 `true`
+- **`ORACLE_RUN_ONCE`**：是否只执行一次检查，默认 `false`
 
 ---
 
@@ -116,23 +120,31 @@ AGGREGATOR_ADDRESS=0x...
 
 ## 运行 BTC 预言机（off-chain oracle）
 
-`oracle/oracle-btc.js` 是一个最小示例，用来：
+`oracle/oracle-btc.js` 现在是一个可持续运行的 worker，会按“最新 round”工作，而不是自行开启 round。它会：
 
-1. 调用 `startNewRound()` 开启新一轮报价
-2. 从 CoinGecko 获取当前 BTC/USD 价格
-3. 将价格按 8 位小数缩放（例如 `30000.12` → `3000012000000`）
-4. 调用 `submit(price, roundId)` 把报价提交到聚合合约
+1. 读取聚合合约的最新 round 状态
+2. 在 round 超时后，尝试自动调用 `finalizeTimedOutRound()`
+3. 检查当前 oracle 地址是否是该 round 的中标 oracle
+4. 检查该 round 当前是否仍可提交
+5. 只有在“已中标且可提交”时，才会从 CoinGecko 获取 BTC/USD 价格并上链
 
-运行一次喂价：
+以 worker 模式持续运行：
 
 ```bash
 npm run oracle:btc
+```
+
+只执行一次检查：
+
+```bash
+npm run oracle:btc:once
 ```
 
 需要确保：
 
 - `.env` 中的 `ORACLE_PK` 有足够的 KAS 测试币支付 gas
 - `.env` 中的 `AGGREGATOR_ADDRESS` 已设置为正确的聚合合约地址
+- 已经通过 `OrderMatching` 创建请求、完成 bidding，并成功启动了最新 round
 
 ---
 
@@ -171,7 +183,7 @@ function getBtcPrice() external view returns (int256 price, uint8 priceDecimals)
   - 若超时后连 quorum 都没达到，则 round 会被标记为 failed，同时仍会 slash 未提交者
 - **当前仍然是 MVP**：
   - 还没有做“离群值/恶意错误值”的 slashing，只惩罚“不提交”
-  - 还没有完整的自动 round 调度和 timeout keeper
+  - 还没有完整的自动 round 调度，但已经有基础的 worker 轮询和 timeout finalize
   - 声誉系统目前仍是基础计数器，不包含更复杂的评分模型
 
 ### 关键参数
@@ -217,10 +229,16 @@ function getBtcPrice() external view returns (int256 price, uint8 priceDecimals)
   ```
 
 - **运行一次 BTC 预言机喂价**
+  - `oracle:btc` 会持续轮询并在需要时自动 submit / finalize
 
   ```bash
   npm run oracle:btc
   ```
 
----
+- **运行一次单次检查**
 
+  ```bash
+  npm run oracle:btc:once
+  ```
+
+---

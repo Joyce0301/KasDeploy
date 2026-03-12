@@ -6,7 +6,8 @@
     "test": "hardhat test",
     "compile": "hardhat compile",
     "deploy:kasplexTest": "hardhat run scripts/deploy.js --network kasplexTest",
-    "oracle:btc": "node oracle/oracle-btc.js"
+    "oracle:btc": "node oracle/oracle-btc.js",
+    "oracle:btc:once": "ORACLE_RUN_ONCE=true node oracle/oracle-btc.js"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",

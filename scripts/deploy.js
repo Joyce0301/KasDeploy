@@ -36,11 +36,19 @@ async function main() {
   await aggregator.waitForDeployment();
   console.log("BtcUsdAggregator deployed at:", await aggregator.getAddress());
 
-  // 4. Authorize aggregator to update registry stats
+  // 4. Deploy OrderMatching
+  const OrderMatching = await ethers.getContractFactory("OrderMatching");
+  const orderMatching = await OrderMatching.deploy(await aggregator.getAddress());
+  await orderMatching.waitForDeployment();
+  console.log("OrderMatching deployed at:", await orderMatching.getAddress());
+
+  // 5. Authorize aggregator to update registry stats
   await (await registry.setAuthorizedUpdater(await aggregator.getAddress(), true)).wait();
   console.log("Authorized aggregator as registry updater");
+  await (await aggregator.setAuthorizedRequester(await orderMatching.getAddress(), true)).wait();
+  console.log("Authorized order matching as aggregator requester");
 
-  // 5. Deposit oracle stake and add deployer as first oracle
+  // 6. Deposit oracle stake and add deployer as first oracle
   await (await link.approve(await aggregator.getAddress(), requiredStakeAmount)).wait();
   await (await aggregator.depositStake(requiredStakeAmount)).wait();
 
@@ -52,12 +60,12 @@ async function main() {
   await (await aggregatorWithSigner.addOracle(deployer.address)).wait();
   console.log("Added oracle in aggregator:", deployer.address);
 
-  // 6. Fund aggregator with KLINK to pay oracle
+  // 7. Optionally fund aggregator with KLINK for manual rounds
   const fundAmount = ethers.parseEther("100000"); // 100,000 KLINK
   await (await link.transfer(await aggregator.getAddress(), fundAmount)).wait();
-  console.log("Funded aggregator with KLINK:", fundAmount.toString());
+  console.log("Funded aggregator with KLINK for manual rounds:", fundAmount.toString());
 
-  // 7. Deploy BtcPriceConsumer
+  // 8. Deploy BtcPriceConsumer
   const BtcPriceConsumer = await ethers.getContractFactory("BtcPriceConsumer");
   const consumer = await BtcPriceConsumer.deploy(await aggregator.getAddress());
   await consumer.waitForDeployment();
