@@ -6,6 +6,8 @@
     "test": "hardhat test",
     "compile": "hardhat compile",
     "deploy:kasplexTest": "hardhat run scripts/deploy.js --network kasplexTest",
+    "request:create": "node scripts/create-request.js",
+    "request:demo": "node scripts/demo-request-flow.js",
     "oracle:btc": "node oracle/oracle-btc.js",
     "oracle:btc:once": "ORACLE_RUN_ONCE=true node oracle/oracle-btc.js"
   },

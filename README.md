@@ -99,6 +99,8 @@ cp .env.example .env
 - **`ORACLE_POLL_INTERVAL_MS`**：worker 轮询最新 round 的间隔，默认 `15000`
 - **`ORACLE_AUTO_FINALIZE`**：是否在 round 超时后自动调用 `finalizeTimedOutRound()`，默认 `true`
 - **`ORACLE_RUN_ONCE`**：是否只执行一次检查，默认 `false`
+- **`REQUESTER_PK`**：用于创建请求的私钥，未设置时默认回退到 `DEPLOYER_PK`
+- **`ORACLE_PKS`**：用于 demo request flow 的 oracle 私钥列表，逗号分隔
 
 ---
 
@@ -170,6 +172,50 @@ npm run oracle:btc:once
 - `.env` 中的 `ORACLE_PK` 有足够的 KAS 测试币支付 gas
 - `.env` 中的 `AGGREGATOR_ADDRESS` 已设置为正确的聚合合约地址
 - 已经通过 `OrderMatching` 创建请求、完成 bidding，并成功启动了最新 round
+
+## 创建请求并启动 round
+
+如果你只是想快速把 round 跑起来，让 worker 不再一直提示 `No rounds exist yet`，现在有两种方式：
+
+只创建 request：
+
+```bash
+npm run request:create
+```
+
+这个脚本会：
+
+1. 用 `REQUESTER_PK` 或 `DEPLOYER_PK` 作为请求方
+2. 给 `OrderMatching` 授权本次 request 预算
+3. 创建一条新的 request
+
+它不会自动 bid 和 finalize，所以 round 还不会启动。
+
+跑完整 demo flow：
+
+```bash
+npm run request:demo
+```
+
+这个脚本会：
+
+1. 创建 request
+2. 使用 `ORACLE_PKS` 里的前 `REQUEST_ORACLE_COUNT` 个 oracle 自动 bid
+3. 等 bidding window 结束
+4. 自动调用 `finalizeRequest()`
+5. 启动新的 round
+
+常用可选环境变量：
+
+- `REQUEST_SPEC`：请求标识，默认 `btc-usd`
+- `REQUEST_ORACLE_COUNT`：需要的 oracle 数量，默认等于 `ORACLE_PKS` 数量
+- `REQUEST_QUORUM`：quorum，默认等于 `REQUEST_ORACLE_COUNT`
+- `REQUEST_BIDDING_WINDOW_SECONDS`：bidding 窗口，默认 `60`
+- `REQUEST_TIMEOUT_SECONDS`：round timeout，默认 `300`
+- `REQUEST_PAYMENT_PER_ORACLE`：每个 oracle 的奖励，默认 `10`
+- `REQUEST_PENALTY_AMOUNT`：每个 oracle 的 penalty，默认 `25`
+
+在 `npm run request:demo` 完成后，再启动或保持 `npm run oracle:btc` 运行，worker 就会发现最新 round 并自动提交。
 
 ---
 
@@ -251,6 +297,18 @@ function getBtcPrice() external view returns (int256 price, uint8 priceDecimals)
 
   ```bash
   npm run deploy:kasplexTest
+  ```
+
+- **创建 request**
+
+  ```bash
+  npm run request:create
+  ```
+
+- **跑完整 demo request flow**
+
+  ```bash
+  npm run request:demo
   ```
 
 - **运行一次 BTC 预言机喂价**
