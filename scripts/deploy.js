@@ -73,7 +73,11 @@ async function main() {
   // 4. Deploy OrderMatching
   console.log("\n[4/8] Deploying OrderMatching...");
   const OrderMatching = await ethers.getContractFactory("OrderMatching");
-  const orderMatching = await OrderMatching.deploy(await aggregator.getAddress());
+  const orderMatching = await OrderMatching.deploy(
+    await aggregator.getAddress(),
+    await link.getAddress(),
+    await registry.getAddress()
+  );
   await waitForContractDeployment("OrderMatching", orderMatching);
 
   // 5. Authorize aggregator to update registry stats

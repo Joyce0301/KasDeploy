@@ -33,6 +33,10 @@ async function fetchBtcPrice() {
   return price;
 }
 
+function formatScaledPrice(scaledPrice) {
+  return ethers.formatUnits(scaledPrice, 8);
+}
+
 async function loadRoundForOracle(aggregator, oracleAddress) {
   const latestRoundId = await aggregator.latestRoundId();
   if (latestRoundId === 0n) {
@@ -142,11 +146,28 @@ async function runIteration(aggregator, wallet, autoFinalize) {
   console.log("Fetched BTC/USD:", priceUsd);
 
   const scaled = BigInt(Math.round(priceUsd * 1e8));
-  console.log("Submitting price:", scaled.toString());
+  console.log(
+    "Submitting price:",
+    JSON.stringify({
+      roundId: roundInfo.latestRoundId.toString(),
+      priceUsd,
+      scaledPrice: scaled.toString(),
+      scaledPriceFormatted: formatScaledPrice(scaled)
+    })
+  );
 
   const txSubmit = await aggregator.submit(scaled, roundInfo.latestRoundId);
   const receiptSubmit = await txSubmit.wait();
-  console.log("Submit tx hash:", receiptSubmit.hash);
+  console.log(
+    "Submit confirmed:",
+    JSON.stringify({
+      txHash: receiptSubmit.hash,
+      roundId: roundInfo.latestRoundId.toString(),
+      submittedPriceUsd: priceUsd,
+      submittedScaledPrice: scaled.toString(),
+      submittedScaledPriceFormatted: formatScaledPrice(scaled)
+    })
+  );
 }
 
 async function runWorker() {

@@ -59,10 +59,10 @@ contract OrderMatching {
     event RequestFinalized(uint256 indexed requestId, uint80 indexed roundId, address[] selectedOracles);
     event RequestCanceled(uint256 indexed requestId);
 
-    constructor(address _aggregator) {
+    constructor(address _aggregator, address _link, address _registry) {
         aggregator = IBtcUsdAggregatorOrderMatching(_aggregator);
-        link = LinkToken(IBtcUsdAggregatorOrderMatching(_aggregator).link());
-        registry = OracleRegistry(IBtcUsdAggregatorOrderMatching(_aggregator).registry());
+        link = LinkToken(_link);
+        registry = OracleRegistry(_registry);
     }
 
     function createRequest(

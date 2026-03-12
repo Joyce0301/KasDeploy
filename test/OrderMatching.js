@@ -33,7 +33,11 @@ describe("OrderMatching", function () {
     await aggregator.waitForDeployment();
 
     const OrderMatching = await ethers.getContractFactory("OrderMatching");
-    const orderMatching = await OrderMatching.deploy(await aggregator.getAddress());
+    const orderMatching = await OrderMatching.deploy(
+      await aggregator.getAddress(),
+      await link.getAddress(),
+      await registry.getAddress()
+    );
     await orderMatching.waitForDeployment();
 
     await registry.setAuthorizedUpdater(await aggregator.getAddress(), true);
