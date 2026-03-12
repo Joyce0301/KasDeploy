@@ -1,24 +1,59 @@
 const { ethers } = require("hardhat");
 
+async function logWalletState(provider, deployer) {
+  const balance = await provider.getBalance(deployer.address);
+  const latestNonce = await provider.getTransactionCount(deployer.address, "latest");
+  const pendingNonce = await provider.getTransactionCount(deployer.address, "pending");
+
+  console.log("Deployer:", deployer.address);
+  console.log("Balance:", ethers.formatEther(balance), "KAS");
+  console.log("Nonce latest:", latestNonce);
+  console.log("Nonce pending:", pendingNonce);
+}
+
+async function waitForContractDeployment(label, contract) {
+  const deploymentTx = contract.deploymentTransaction();
+  console.log(`${label} deploy tx hash:`, deploymentTx ? deploymentTx.hash : "unknown");
+  if (deploymentTx) {
+    console.log(`${label} deploy nonce:`, deploymentTx.nonce);
+  }
+  console.log(`Waiting for ${label} deployment confirmation...`);
+  await contract.waitForDeployment();
+  console.log(`${label} deployed at:`, await contract.getAddress());
+}
+
+async function sendAndWait(label, txPromise) {
+  const tx = await txPromise;
+  console.log(`${label} tx hash:`, tx.hash);
+  console.log(`${label} tx nonce:`, tx.nonce);
+  console.log(`Waiting for ${label} confirmation...`);
+  const receipt = await tx.wait();
+  console.log(`${label} confirmed in block:`, receipt.blockNumber);
+  return receipt;
+}
+
 async function main() {
   const [deployer] = await ethers.getSigners();
-  console.log("Deployer:", deployer.address);
+  const provider = ethers.provider;
+
+  await logWalletState(provider, deployer);
 
   // 1. Deploy LinkToken
+  console.log("\n[1/8] Deploying LinkToken...");
   const LinkToken = await ethers.getContractFactory("LinkToken");
-  const initialSupply = ethers.parseEther("1000000"); // 1,000,000 KLINK
+  const initialSupply = ethers.parseEther("1000000");
   const link = await LinkToken.deploy(initialSupply);
-  await link.waitForDeployment();
-  console.log("LinkToken deployed at:", await link.getAddress());
+  await waitForContractDeployment("LinkToken", link);
 
   // 2. Deploy OracleRegistry
+  console.log("\n[2/8] Deploying OracleRegistry...");
   const OracleRegistry = await ethers.getContractFactory("OracleRegistry");
   const registry = await OracleRegistry.deploy();
-  await registry.waitForDeployment();
-  console.log("OracleRegistry deployed at:", await registry.getAddress());
+  await waitForContractDeployment("OracleRegistry", registry);
 
   // 3. Deploy BtcUsdAggregator
-  const paymentPerOracle = ethers.parseEther("10"); // 10 KLINK per round per oracle
+  console.log("\n[3/8] Deploying BtcUsdAggregator...");
+  const paymentPerOracle = ethers.parseEther("10");
   const minSubmissionCount = 1;
   const roundTimeoutSeconds = 300;
   const slashAmount = ethers.parseEther("50");
@@ -33,48 +68,68 @@ async function main() {
     slashAmount,
     requiredStakeAmount
   );
-  await aggregator.waitForDeployment();
-  console.log("BtcUsdAggregator deployed at:", await aggregator.getAddress());
+  await waitForContractDeployment("BtcUsdAggregator", aggregator);
 
   // 4. Deploy OrderMatching
+  console.log("\n[4/8] Deploying OrderMatching...");
   const OrderMatching = await ethers.getContractFactory("OrderMatching");
   const orderMatching = await OrderMatching.deploy(await aggregator.getAddress());
-  await orderMatching.waitForDeployment();
-  console.log("OrderMatching deployed at:", await orderMatching.getAddress());
+  await waitForContractDeployment("OrderMatching", orderMatching);
 
   // 5. Authorize aggregator to update registry stats
-  await (await registry.setAuthorizedUpdater(await aggregator.getAddress(), true)).wait();
-  console.log("Authorized aggregator as registry updater");
-  await (await aggregator.setAuthorizedRequester(await orderMatching.getAddress(), true)).wait();
-  console.log("Authorized order matching as aggregator requester");
+  console.log("\n[5/8] Authorizing registry and aggregator integrations...");
+  await sendAndWait(
+    "Authorize aggregator as registry updater",
+    registry.setAuthorizedUpdater(await aggregator.getAddress(), true)
+  );
+  await sendAndWait(
+    "Authorize order matching as aggregator requester",
+    aggregator.setAuthorizedRequester(await orderMatching.getAddress(), true)
+  );
 
   // 6. Deposit oracle stake and add deployer as first oracle
-  await (await link.approve(await aggregator.getAddress(), requiredStakeAmount)).wait();
-  await (await aggregator.depositStake(requiredStakeAmount)).wait();
-
-  const registryWithSigner = registry.connect(deployer);
-  await (await registryWithSigner.addOracle(deployer.address)).wait();
-  console.log("Added oracle in registry:", deployer.address);
-
-  const aggregatorWithSigner = aggregator.connect(deployer);
-  await (await aggregatorWithSigner.addOracle(deployer.address)).wait();
-  console.log("Added oracle in aggregator:", deployer.address);
+  console.log("\n[6/8] Staking deployer and registering first oracle...");
+  await sendAndWait(
+    "Approve stake transfer",
+    link.approve(await aggregator.getAddress(), requiredStakeAmount)
+  );
+  await sendAndWait(
+    "Deposit stake",
+    aggregator.depositStake(requiredStakeAmount)
+  );
+  await sendAndWait(
+    "Add oracle in registry",
+    registry.connect(deployer).addOracle(deployer.address)
+  );
+  await sendAndWait(
+    "Add oracle in aggregator",
+    aggregator.connect(deployer).addOracle(deployer.address)
+  );
 
   // 7. Optionally fund aggregator with KLINK for manual rounds
-  const fundAmount = ethers.parseEther("100000"); // 100,000 KLINK
-  await (await link.transfer(await aggregator.getAddress(), fundAmount)).wait();
-  console.log("Funded aggregator with KLINK for manual rounds:", fundAmount.toString());
+  console.log("\n[7/8] Funding aggregator for manual rounds...");
+  const fundAmount = ethers.parseEther("100000");
+  await sendAndWait(
+    "Fund aggregator with KLINK",
+    link.transfer(await aggregator.getAddress(), fundAmount)
+  );
+  console.log("Fund amount:", fundAmount.toString());
 
   // 8. Deploy BtcPriceConsumer
+  console.log("\n[8/8] Deploying BtcPriceConsumer...");
   const BtcPriceConsumer = await ethers.getContractFactory("BtcPriceConsumer");
   const consumer = await BtcPriceConsumer.deploy(await aggregator.getAddress());
-  await consumer.waitForDeployment();
-  console.log("BtcPriceConsumer deployed at:", await consumer.getAddress());
+  await waitForContractDeployment("BtcPriceConsumer", consumer);
 
-  console.log("Deployment complete.");
+  console.log("\nDeployment complete.");
+  console.log("LinkToken:", await link.getAddress());
+  console.log("OracleRegistry:", await registry.getAddress());
+  console.log("BtcUsdAggregator:", await aggregator.getAddress());
+  console.log("OrderMatching:", await orderMatching.getAddress());
+  console.log("BtcPriceConsumer:", await consumer.getAddress());
 }
 
 main().catch((error) => {
-  console.error(error);
+  console.error("Deployment error:", error);
   process.exitCode = 1;
 });

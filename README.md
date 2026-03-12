@@ -217,6 +217,42 @@ npm run request:demo
 
 在 `npm run request:demo` 完成后，再启动或保持 `npm run oracle:btc` 运行，worker 就会发现最新 round 并自动提交。
 
+### 关于 oracle 数量的说明
+
+`REQUEST_ORACLE_COUNT` 和 `REQUEST_QUORUM` 决定了一条 request 需要多少个 oracle 参与。
+
+例如：
+
+- `REQUEST_ORACLE_COUNT=2`
+- `REQUEST_QUORUM=2`
+
+表示这条 request 需要 2 个 active oracle 参与 bidding，并且最终需要 2 个 oracle 都提交，才能在 timeout 前直接 finalize。
+
+这意味着你需要同时满足下面两个条件：
+
+1. 链上已经注册了足够数量的 active oracle
+   - 这些 oracle 地址已经完成 `depositStake()`
+   - 已经被加入 `OracleRegistry`
+   - 已经被加入 `BtcUsdAggregator`
+2. `.env` 中配置了足够数量的 oracle 私钥
+   - 例如：`ORACLE_PKS=0xpk1,0xpk2`
+
+如果你只有 1 个 oracle 账户在本地运行，但 request 配成了 `2/2`，那么：
+
+- request 可以被创建
+- 但不容易完成 bidding 和 finalize
+- worker 也会一直看不到可提交的 round
+
+如果你只是想先快速把整条链路调通，建议先用单 oracle 配置：
+
+```dotenv
+REQUEST_ORACLE_COUNT=1
+REQUEST_QUORUM=1
+ORACLE_PKS=0x你的单个oracle私钥
+```
+
+这样一个 active oracle 就能完成 demo flow，更适合本地联调。
+
 ---
 
 ## 在链上读取 BTC 价格
