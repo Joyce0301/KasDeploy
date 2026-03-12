@@ -26,6 +26,19 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function waitForBiddingDeadline(provider, biddingDeadline) {
+  while (true) {
+    const block = await provider.getBlock("latest");
+    if (block && block.timestamp > biddingDeadline) {
+      return block.timestamp;
+    }
+
+    const remaining = Math.max(1, biddingDeadline - (block ? block.timestamp : 0));
+    console.log(`Waiting for bidding window to close... latest=${block ? block.timestamp : "unknown"} deadline=${biddingDeadline} remaining=${remaining}s`);
+    await sleep(Math.min(remaining, 5) * 1000);
+  }
+}
+
 function getConfig() {
   const rpcUrl = process.env.RPC_URL || "https://rpc.kasplextest.xyz";
   const requesterPk = process.env.REQUESTER_PK || process.env.DEPLOYER_PK;
@@ -106,12 +119,7 @@ async function main() {
 
   const request = await orderMatching.requests(requestId);
   const deadlineSeconds = Number(request.biddingDeadline);
-  const nowSeconds = Math.floor(Date.now() / 1000);
-  const waitMs = Math.max(0, deadlineSeconds - nowSeconds + 2) * 1000;
-  if (waitMs > 0) {
-    console.log(`Waiting ${Math.ceil(waitMs / 1000)}s for bidding window to close...`);
-    await sleep(waitMs);
-  }
+  await waitForBiddingDeadline(provider, deadlineSeconds);
 
   const finalizeTx = await orderMatching.finalizeRequest(requestId);
   const finalizeReceipt = await finalizeTx.wait();
