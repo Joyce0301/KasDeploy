@@ -166,39 +166,50 @@ ORDER_MATCHING_ADDRESS=0x...
 
 ---
 
-## 创建请求并启动 round
+## 运行顺序
 
-如果你只是想快速把 round 跑起来，让 worker 不再一直提示 `No rounds exist yet`，现在有两种方式：
+按下面顺序执行：
 
-只创建 request：
+### 1. 部署合约
 
 ```bash
-npm run request:create
+npm run deploy:kasplexTest
 ```
 
-这个脚本会：
+部署完成后，把输出里的地址填回 `.env`：
 
-1. 用 `REQUESTER_PK` 或 `DEPLOYER_PK` 作为请求方
-2. 给 `OrderMatching` 授权本次 request 预算
-3. 创建一条新的 request
+```dotenv
+AGGREGATOR_ADDRESS=0x...
+ORDER_MATCHING_ADDRESS=0x...
+```
 
-它不会自动 bid 和 finalize，所以 round 还不会启动。
-
-跑完整 demo flow：
+### 2. 创建 request 并启动 round
 
 ```bash
 npm run request:demo
 ```
 
-这个脚本会：
+这个命令会自动完成：
 
 1. 创建 request
-2. 使用 `ORACLE_PKS` 里的前 `REQUEST_ORACLE_COUNT` 个 oracle 自动 bid
+2. oracle bid
 3. 等 bidding window 结束
-4. 自动调用 `finalizeRequest()`
-5. 启动新的 round
+4. finalize request
+5. 启动 round
 
-常用可选环境变量：
+### 3. 运行 oracle worker
+
+```bash
+npm run oracle:btc
+```
+
+如果你只想检查一次，不持续轮询：
+
+```bash
+npm run oracle:btc:once
+```
+
+常用 request 参数：
 
 - `REQUEST_SPEC`：请求标识，默认 `btc-usd`
 - `REQUEST_ORACLE_COUNT`：需要的 oracle 数量，默认等于 `ORACLE_PKS` 数量
@@ -207,8 +218,6 @@ npm run request:demo
 - `REQUEST_TIMEOUT_SECONDS`：round timeout，默认 `300`
 - `REQUEST_PAYMENT_PER_ORACLE`：每个 oracle 的奖励，默认 `10`
 - `REQUEST_PENALTY_AMOUNT`：每个 oracle 的 penalty，默认 `25`
-
-在 `npm run request:demo` 完成后，再启动或保持 `npm run oracle:btc` 运行，worker 就会发现最新 round 并自动提交。
 
 ### 关于 oracle 数量的说明
 
@@ -250,8 +259,6 @@ ORACLE_PKS=0x你的单个oracle私钥
 
 ## 运行 BTC 预言机（off-chain oracle）
 
-在 round 已经被创建并启动之后，再运行 `oracle/oracle-btc.js`。
-
 它现在是一个可持续运行的 worker，会按“最新 round”工作，而不是自行开启 round。它会：
 
 1. 读取聚合合约的最新 round 状态
@@ -259,18 +266,6 @@ ORACLE_PKS=0x你的单个oracle私钥
 3. 检查当前 oracle 地址是否是该 round 的中标 oracle
 4. 检查该 round 当前是否仍可提交
 5. 只有在“已中标且可提交”时，才会从 CoinGecko 获取 BTC/USD 价格并上链
-
-以 worker 模式持续运行：
-
-```bash
-npm run oracle:btc
-```
-
-只执行一次检查：
-
-```bash
-npm run oracle:btc:once
-```
 
 需要确保：
 
