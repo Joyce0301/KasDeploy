@@ -16,6 +16,31 @@
 - 超时后只要达到 quorum，就能 finalize 本轮并对未提交者执行 slash
 - 超时后如果连 quorum 都没达到，则本轮记为 failed，并对未提交者执行 slash
 
+## 当前已实现
+
+目前仓库里已经打通了下面这条最小可用链路：
+
+1. 部署 `LinkToken`、`OracleRegistry`、`BtcUsdAggregator`、`OrderMatching`、`BtcPriceConsumer`
+2. oracle 先质押 `KLINK`，再被加入 active set
+3. 请求方通过 `OrderMatching` 创建一条带 SLA 参数的请求
+4. active oracle 对请求进行 bid
+5. `OrderMatching` 根据基础 reputation 指标挑选中标 oracle，并按该请求的 `payment/quorum/timeout/penalty` 启动 round
+6. 中标 oracle 通过链下 worker 自动轮询最新 round，在自己被选中且仍可提交时上报 BTC/USD 价格
+7. round 在两种情况下结束：
+   - 全部中标 oracle 在 timeout 前提交，立即 finalize
+   - timeout 到达后，由任意调用者或 worker 触发 `finalizeTimedOutRound()`
+8. 提交成功的 oracle 获得该请求定义的 reward，未提交的中标 oracle 按该请求定义的 penalty 被 slash
+9. consumer 合约和外部脚本可以通过 `latestRoundData()` 读取最新聚合价格
+
+已覆盖的机制包括：
+
+- 基础 reputation 计数：`assigned / submitted / accepted`
+- request-scoped SLA：每个请求单独配置 `oracleCount / quorum / timeout / payment / penalty`
+- request-scoped oracle selection：每轮只允许中标 oracle 提交
+- per-request reward/slashing：奖励和罚没不再是全局固定值
+- 基础 worker 自动化：自动轮询、自动 submit、自动 timeout finalize
+- 基础测试覆盖：manual round、request round、timeout/slash、bid ranking、cancel/refund
+
 ---
 
 ## 目录结构
