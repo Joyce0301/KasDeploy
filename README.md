@@ -90,17 +90,32 @@ cp .env.example .env
 
 `.env` 字段说明：
 
+基础必填：
+
 - **`RPC_URL`**：RPC 地址  
   - 默认：`https://rpc.kasplextest.xyz`
 - **`DEPLOYER_PK`**：部署者私钥（带 `0x` 前缀）
+
+运行 oracle worker 时必填：
+
 - **`ORACLE_PK`**：预言机节点的私钥（可以与 `DEPLOYER_PK` 相同，也可以分离）
-- **`AGGREGATOR_ADDRESS`**：`BtcUsdAggregator` 合约地址（部署后再填）
-- **`ORDER_MATCHING_ADDRESS`**：`OrderMatching` 合约地址（用于创建/跟踪请求，当前 oracle 脚本本身不直接调用它）
+- **`AGGREGATOR_ADDRESS`**：`BtcUsdAggregator` 合约地址
+
+运行 request 脚本时必填：
+
+- **`ORDER_MATCHING_ADDRESS`**：`OrderMatching` 合约地址
+- **`REQUESTER_PK`**：请求方私钥
+  - 未设置时默认回退到 `DEPLOYER_PK`
+
+运行 `request:demo` 时额外必填：
+
+- **`ORACLE_PKS`**：用于自动 bidding 的 oracle 私钥列表，逗号分隔
+
+可选参数：
+
 - **`ORACLE_POLL_INTERVAL_MS`**：worker 轮询最新 round 的间隔，默认 `15000`
 - **`ORACLE_AUTO_FINALIZE`**：是否在 round 超时后自动调用 `finalizeTimedOutRound()`，默认 `true`
 - **`ORACLE_RUN_ONCE`**：是否只执行一次检查，默认 `false`
-- **`REQUESTER_PK`**：用于创建请求的私钥，未设置时默认回退到 `DEPLOYER_PK`
-- **`ORACLE_PKS`**：用于 demo request flow 的 oracle 私钥列表，逗号分隔
 
 ---
 
@@ -141,6 +156,12 @@ BtcPriceConsumer deployed at: 0x...
 
 ```dotenv
 AGGREGATOR_ADDRESS=0x...
+```
+
+同时也要把 `OrderMatching` 地址填回 `.env`：
+
+```dotenv
+ORDER_MATCHING_ADDRESS=0x...
 ```
 
 ---
